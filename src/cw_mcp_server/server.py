@@ -5,12 +5,14 @@
 
 import argparse
 import asyncio
+import os
 from functools import wraps
 from typing import Any, Callable, List, Literal, Optional, Type
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import TransportSecuritySettings
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import JSONResponse
 
 from .resources.cloudwatch_logs_resource import CloudWatchLogsResource
 from .tools.search_tools import CloudWatchLogsSearchTools
@@ -59,31 +61,103 @@ parser.add_argument(
     default=["*"],
     help="Allowed host pattern for TrustedHostMiddleware; repeat for multiple values",
 )
+parser.add_argument(
+    "--auth-token-env",
+    type=str,
+    default="MCP_AUTH_TOKEN",
+    help=(
+        "Environment variable name that holds the shared bearer token for "
+        "x-mcp-token header validation. Auth is enabled only if this env var is set "
+        "(default name: MCP_AUTH_TOKEN)"
+    ),
+)
+parser.add_argument(
+    "--auth-header-name",
+    type=str,
+    default="x-mcp-token",
+    help="HTTP header name carrying the shared bearer token (default: x-mcp-token)",
+)
 args, unknown = parser.parse_known_args()
 
 
-class SecureFastMCP(FastMCP):
-    """FastMCP extension that adds TrustedHost middleware to HTTP transports."""
+class TokenAuthMiddleware:
+    """Pure ASGI middleware that validates a shared bearer token header.
 
-    def __init__(self, *mcp_args: Any, trusted_hosts: List[str], **mcp_kwargs: Any) -> None:
+    Implemented as raw ASGI to remain compatible with streaming responses
+    (SSE / chunked transfer) used by FastMCP's streamable-HTTP transport.
+    Requests missing or with an invalid token are rejected with HTTP 401.
+    """
+
+    def __init__(self, app: Any, header_name: str, expected_token: str) -> None:
+        self._app = app
+        self._header_name = header_name.lower().encode("latin-1")
+        self._expected_token = expected_token.encode("latin-1")
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Inspect the token header and forward or reject the request."""
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+
+        provided_token: Optional[bytes] = None
+        for header_name, header_value in scope.get("headers", []):
+            if header_name == self._header_name:
+                provided_token = header_value
+                break
+
+        if not provided_token or provided_token != self._expected_token:
+            response = JSONResponse(
+                {"error": "unauthorized", "reason": "invalid_or_missing_token"},
+                status_code=401,
+            )
+            await response(scope, receive, send)
+            return
+
+        await self._app(scope, receive, send)
+
+
+class SecureFastMCP(FastMCP):
+    """FastMCP extension that adds host filtering and optional token auth."""
+
+    def __init__(
+        self,
+        *mcp_args: Any,
+        trusted_hosts: List[str],
+        auth_header_name: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **mcp_kwargs: Any,
+    ) -> None:
         super().__init__(*mcp_args, **mcp_kwargs)
         self._trusted_hosts = trusted_hosts
+        self._auth_header_name = auth_header_name
+        self._auth_token = auth_token
 
-    def _apply_trusted_host_middleware(self, app: Any) -> Any:
-        """Apply host header validation middleware to the generated Starlette app."""
+    def _apply_security_middlewares(self, app: Any) -> Any:
+        """Apply trusted-host and optional token-auth middlewares to the app."""
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=self._trusted_hosts)
+        if self._auth_token and self._auth_header_name:
+            app.add_middleware(
+                TokenAuthMiddleware,
+                header_name=self._auth_header_name,
+                expected_token=self._auth_token,
+            )
         return app
 
     def streamable_http_app(self) -> Any:
-        """Build streamable HTTP app and enforce TrustedHost validation."""
+        """Build streamable HTTP app with security middlewares applied."""
         app = super().streamable_http_app()
-        return self._apply_trusted_host_middleware(app)
+        return self._apply_security_middlewares(app)
 
     def sse_app(self) -> Any:
-        """Build SSE app and enforce TrustedHost validation."""
+        """Build SSE app with security middlewares applied."""
         app = super().sse_app()
-        return self._apply_trusted_host_middleware(app)
+        return self._apply_security_middlewares(app)
 
+
+# Resolve optional shared bearer token from environment for HTTP transports.
+# If the env var is unset, token-based auth is disabled and the server keeps
+# its previous behavior (host-header validation only).
+configured_auth_token = os.getenv(args.auth_token_env)
 
 # Create the MCP server for CloudWatch logs
 # Host validation is handled by TrustedHostMiddleware at the outer Starlette layer,
@@ -92,6 +166,8 @@ mcp = SecureFastMCP(
     "CloudWatch Logs Analyzer",
     stateless_http=args.stateless,
     trusted_hosts=args.trusted_host,
+    auth_header_name=args.auth_header_name,
+    auth_token=configured_auth_token,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
     ),
@@ -541,6 +617,20 @@ async def correlate_logs(
     pass
 
 
+def _normalize_http_path(raw_path: str) -> str:
+    """Ensure HTTP route paths always start with a single leading slash.
+
+    Git Bash/MSYS on Windows can strip the leading '/' from CLI arguments,
+    which breaks Starlette route registration. This normalizer keeps the
+    server robust regardless of shell behavior.
+    """
+    cleaned = (raw_path or "").strip()
+    if not cleaned:
+        return "/mcp"
+    cleaned = cleaned.lstrip("/")
+    return f"/{cleaned}"
+
+
 def main() -> None:
     """Start the MCP server using the configured transport."""
     transport: Literal["stdio", "streamable-http", "sse"] = args.transport
@@ -548,7 +638,7 @@ def main() -> None:
     if transport == "streamable-http":
         mcp.settings.host = args.host
         mcp.settings.port = args.port
-        mcp.settings.streamable_http_path = args.streamable_http_path
+        mcp.settings.streamable_http_path = _normalize_http_path(args.streamable_http_path)
         mcp.run(transport=transport)
         return
 
