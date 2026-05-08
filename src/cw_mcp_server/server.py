@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
-from typing import List, Callable, Any, Type, Optional
-from functools import wraps
 import asyncio
+from functools import wraps
+from typing import Any, Callable, List, Literal, Optional, Type
 
 from mcp.server.fastmcp import FastMCP
 
@@ -15,12 +15,39 @@ from .tools.search_tools import CloudWatchLogsSearchTools
 from .tools.analysis_tools import CloudWatchLogsAnalysisTools
 from .tools.correlation_tools import CloudWatchLogsCorrelationTools
 
+# This module registers CloudWatch MCP resources/tools and supports both local stdio
+# transport and remote streamable HTTP transport for deployment environments.
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="CloudWatch Logs Analyzer MCP Server")
 parser.add_argument(
     "--profile", type=str, help="AWS profile name to use for credentials"
 )
 parser.add_argument("--region", type=str, help="AWS region name to use for API calls")
+parser.add_argument(
+    "--transport",
+    choices=["stdio", "streamable-http", "sse"],
+    default="stdio",
+    help="MCP transport mode (default: stdio)",
+)
+parser.add_argument(
+    "--host",
+    type=str,
+    default="0.0.0.0",
+    help="Host interface for HTTP/SSE transports (default: 0.0.0.0)",
+)
+parser.add_argument(
+    "--port",
+    type=int,
+    default=8000,
+    help="Port for HTTP/SSE transports (default: 8000)",
+)
+parser.add_argument(
+    "--streamable-http-path",
+    type=str,
+    default="/mcp",
+    help="HTTP route path when using streamable-http transport (default: /mcp)",
+)
 parser.add_argument(
     "--stateless", action="store_true", help="Stateless HTTP mode", default=False
 )
@@ -475,8 +502,23 @@ async def correlate_logs(
 
 
 def main() -> None:
-    # Run the MCP server
-    mcp.run()
+    """Start the MCP server using the configured transport."""
+    transport: Literal["stdio", "streamable-http", "sse"] = args.transport
+
+    if transport == "streamable-http":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.settings.streamable_http_path = args.streamable_http_path
+        mcp.run(transport=transport)
+        return
+
+    if transport == "sse":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.run(transport=transport)
+        return
+
+    mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":

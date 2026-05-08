@@ -26,6 +26,25 @@ The server runs in stateful mode by default. To run it in stateless mode, you ca
 uvx --from git+https://github.com/awslabs/Log-Analyzer-with-MCP cw-mcp-server [--profile your-profile] [--region us-west-2] --stateless
 ```
 
+To run with streamable HTTP transport (for EC2 or other remote deployment), use:
+
+```bash
+uvx --from git+https://github.com/awslabs/Log-Analyzer-with-MCP cw-mcp-server \
+  --transport streamable-http \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --streamable-http-path /mcp \
+  --stateless
+```
+
+If your EC2 instance has public DNS `ec2-xx-xx-xx-xx.compute.amazonaws.com`, the MCP URL is:
+
+```text
+http://ec2-xx-xx-xx-xx.compute.amazonaws.com:8000/mcp
+```
+
+For local desktop tools (Claude Desktop, Cursor local), continue using the default `stdio` transport.
+
 ## 📟 CLI Client (one off usage)
 
 ```bash
