@@ -9,6 +9,7 @@ from functools import wraps
 from typing import Any, Callable, List, Literal, Optional, Type
 
 from mcp.server.fastmcp import FastMCP
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .resources.cloudwatch_logs_resource import CloudWatchLogsResource
 from .tools.search_tools import CloudWatchLogsSearchTools
@@ -51,11 +52,44 @@ parser.add_argument(
 parser.add_argument(
     "--stateless", action="store_true", help="Stateless HTTP mode", default=False
 )
+parser.add_argument(
+    "--trusted-host",
+    action="append",
+    default=["*"],
+    help="Allowed host pattern for TrustedHostMiddleware; repeat for multiple values",
+)
 args, unknown = parser.parse_known_args()
 
 
+class SecureFastMCP(FastMCP):
+    """FastMCP extension that adds TrustedHost middleware to HTTP transports."""
+
+    def __init__(self, *mcp_args: Any, trusted_hosts: List[str], **mcp_kwargs: Any) -> None:
+        super().__init__(*mcp_args, **mcp_kwargs)
+        self._trusted_hosts = trusted_hosts
+
+    def _apply_trusted_host_middleware(self, app: Any) -> Any:
+        """Apply host header validation middleware to the generated Starlette app."""
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=self._trusted_hosts)
+        return app
+
+    def streamable_http_app(self) -> Any:
+        """Build streamable HTTP app and enforce TrustedHost validation."""
+        app = super().streamable_http_app()
+        return self._apply_trusted_host_middleware(app)
+
+    def sse_app(self) -> Any:
+        """Build SSE app and enforce TrustedHost validation."""
+        app = super().sse_app()
+        return self._apply_trusted_host_middleware(app)
+
+
 # Create the MCP server for CloudWatch logs
-mcp = FastMCP("CloudWatch Logs Analyzer", stateless_http=args.stateless)
+mcp = SecureFastMCP(
+    "CloudWatch Logs Analyzer",
+    stateless_http=args.stateless,
+    trusted_hosts=args.trusted_host,
+)
 
 # Initialize our resource and tools classes with the specified AWS profile and region
 cw_resource = CloudWatchLogsResource(profile_name=args.profile, region_name=args.region)
