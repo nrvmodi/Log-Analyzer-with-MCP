@@ -55,7 +55,7 @@ args, unknown = parser.parse_known_args()
 
 
 # Create the MCP server for CloudWatch logs
-mcp = FastMCP("CloudWatch Logs Analyzer", stateless_http=args.stateless)
+mcp = FastMCP("CloudWatch Logs Analyzer", stateless_http=args.stateless, allowed_hosts=["*"])
 
 # Initialize our resource and tools classes with the specified AWS profile and region
 cw_resource = CloudWatchLogsResource(profile_name=args.profile, region_name=args.region)
