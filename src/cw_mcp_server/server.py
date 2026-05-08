@@ -9,6 +9,7 @@ from functools import wraps
 from typing import Any, Callable, List, Literal, Optional, Type
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import TransportSecuritySettings
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .resources.cloudwatch_logs_resource import CloudWatchLogsResource
@@ -85,10 +86,15 @@ class SecureFastMCP(FastMCP):
 
 
 # Create the MCP server for CloudWatch logs
+# Host validation is handled by TrustedHostMiddleware at the outer Starlette layer,
+# so FastMCP's internal DNS rebinding protection is disabled here to avoid double-validation.
 mcp = SecureFastMCP(
     "CloudWatch Logs Analyzer",
     stateless_http=args.stateless,
     trusted_hosts=args.trusted_host,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
 )
 
 # Initialize our resource and tools classes with the specified AWS profile and region
