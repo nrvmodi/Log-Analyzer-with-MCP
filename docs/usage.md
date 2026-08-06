@@ -29,21 +29,42 @@ uvx --from git+https://github.com/awslabs/Log-Analyzer-with-MCP cw-mcp-server [-
 To run with streamable HTTP transport (for EC2 or other remote deployment), use:
 
 ```bash
-uvx --from git+https://github.com/awslabs/Log-Analyzer-with-MCP cw-mcp-server \
+export MCP_AUTH_TOKEN="REPLACE_WITH_LONG_RANDOM_SECRET"
+
+uv run python -m cw_mcp_server.server \
   --transport streamable-http \
   --host 0.0.0.0 \
   --port 8000 \
   --streamable-http-path /mcp \
-  --stateless
+  --stateless \
+  --trusted-host "*"
 ```
 
-If your EC2 instance has public DNS `ec2-xx-xx-xx-xx.compute.amazonaws.com`, the MCP URL is:
+If your EC2 instance has public DNS `YOUR_EC2_PUBLIC_DNS`, the MCP URL is:
 
 ```text
-http://ec2-xx-xx-xx-xx.compute.amazonaws.com:8000/mcp
+http://YOUR_EC2_PUBLIC_DNS:8000/mcp
+```
+
+Cursor / remote MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "http-cloudwatch-logs-analyzer": {
+      "type": "http",
+      "url": "http://YOUR_EC2_PUBLIC_DNS:8000/mcp",
+      "headers": {
+        "x-mcp-token": "REPLACE_WITH_LONG_RANDOM_SECRET"
+      }
+    }
+  }
+}
 ```
 
 For local desktop tools (Claude Desktop, Cursor local), continue using the default `stdio` transport.
+
+See the root [README.md](../README.md) for a full comparison vs the original AWS CloudWatch MCP and security notes.
 
 ## 📟 CLI Client (one off usage)
 

@@ -1,6 +1,32 @@
 # AI Integration Guide
 
-## 🖥️ Claude Desktop Integration
+## Remote HTTP MCP (Cursor / Claude Remote Agents)
+
+Use this when the server runs on EC2 (or another host) and clients connect by URL.
+
+Server must be started with `--transport streamable-http` and (recommended) `MCP_AUTH_TOKEN` set.
+
+```json
+{
+  "mcpServers": {
+    "http-cloudwatch-logs-analyzer": {
+      "type": "http",
+      "url": "http://YOUR_EC2_PUBLIC_DNS:8000/mcp",
+      "headers": {
+        "x-mcp-token": "REPLACE_WITH_LONG_RANDOM_SECRET"
+      }
+    }
+  }
+}
+```
+
+Replace the URL and token with your deployment values. The token must match `MCP_AUTH_TOKEN` on the server.
+
+**Why the token is required:** this MCP URL is an open network endpoint so **Cursor Cloud AI agents** can reach it from the internet. That reachability is required for remote automation — and it also means unauthorized callers could hit the same URL unless every request is authenticated. Without `x-mcp-token`, anyone who discovers the endpoint can query your CloudWatch Logs using the server's AWS permissions. Local stdio mode does not have this same exposure. Full rationale: [../README.md#why-security-is-required](../README.md#why-security-is-required).
+
+This is the main difference from the original AWS CloudWatch MCP, which was designed for local **stdio** launch only. Full comparison and run commands: [../README.md](../README.md).
+
+## 🖥️ Claude Desktop Integration (local stdio)
 
 You can add the configuration for the MCP server in Claude for Desktop for AI-assisted log analysis.
 
